@@ -124,6 +124,7 @@ describe('ConflictResolutionService', () => {
       'getUnsyncedByEntity',
       'getOpById',
       'getVectorClock',
+      'rebasePendingLocalOps',
     ]);
     mockOpLogStore.mergeRemoteOpClocks.and.resolveTo(undefined);
     mockOpLogStore.markReducersCommittedAndMergeClocks.and.resolveTo(undefined);
@@ -540,6 +541,46 @@ describe('ConflictResolutionService', () => {
       expect(mockOpLogStore.markRejected).toHaveBeenCalledWith(['local-1']);
       // Routine self-healing remains quiet.
       expect(mockSnackService.open).not.toHaveBeenCalled();
+    });
+
+    it('keeps a local time delta beside a remote win and rebases it after the rejections (#10408)', async () => {
+      const now = Date.now();
+      const doneOp = (id: string, clientId: string, timestamp: number): Operation => ({
+        ...createOpWithTimestamp(id, clientId, timestamp),
+        payload: { task: { id: 'task-1', changes: { isDone: true } } },
+      });
+      const delta: Operation = {
+        ...createOpWithTimestamp('local-delta', 'client-a', now - 2000),
+        actionType: ActionType.TIME_TRACKING_SYNC_TIME_SPENT,
+        payload: { taskId: 'task-1', date: '2024-01-15', duration: 60000 },
+      };
+      const remoteDone = {
+        ...doneOp('remote-done', 'clientB', now),
+        vectorClock: { clientB: 3 },
+      };
+      const conflicts = [
+        createConflict(
+          'task-1',
+          [delta, doneOp('local-done', 'client-a', now - 1000)],
+          [remoteDone],
+        ),
+      ];
+      mockOpLogStore.rebasePendingLocalOps.and.resolveTo(undefined);
+      mockOperationApplier.applyOperations.and.resolveTo({ appliedOps: [remoteDone] });
+
+      await service.autoResolveConflictsLWW(conflicts);
+
+      expect(mockOpLogStore.markRejected).toHaveBeenCalledWith(['local-done']);
+      expect(mockOpLogStore.markRejected.calls.allArgs().flat(2)).not.toContain(
+        'local-delta',
+      );
+      expect(mockOpLogStore.rebasePendingLocalOps).toHaveBeenCalledOnceWith(
+        ['local-delta'],
+        { clientB: 3 },
+      );
+      expect(mockOpLogStore.markRejected).toHaveBeenCalledBefore(
+        mockOpLogStore.rebasePendingLocalOps,
+      );
     });
 
     it('should auto-resolve conflict as local when local timestamp is newer', async () => {

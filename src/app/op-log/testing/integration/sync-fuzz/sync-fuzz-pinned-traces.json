@@ -834,6 +834,27 @@
     "rejections": []
   },
   {
+    "class": "time-delta-remote-win",
+    "ref": "fixed by #10413 (regression pin, #10408's own shape)",
+    "name": "a delta tracked beside a done toggle that loses to a later done toggle reaches every device",
+    "steps": [
+      {
+        "d": "B",
+        "a": ["track", "t1", 5000]
+      },
+      {
+        "d": "B",
+        "a": ["doneTask", "t1", true]
+      },
+      {
+        "d": "A",
+        "a": ["doneTask", "t1", true]
+      }
+    ],
+    "signatures": [],
+    "rejections": []
+  },
+  {
     "class": "coverage",
     "ref": "coverage trace: no known bug",
     "name": "a task archived on one device and restored on another converges across compactions and restarts",

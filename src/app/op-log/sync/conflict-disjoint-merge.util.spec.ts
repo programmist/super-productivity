@@ -6,7 +6,6 @@ import {
   mergeChangedFields,
   MergeSideMeta,
   noiseTiebreakSide,
-  rebaseKeptTimeDeltas,
   timeDeltasCommutingWithRemoteWin,
   touchesCrossEntityTaskFields,
 } from './conflict-disjoint-merge.util';
@@ -623,9 +622,11 @@ describe('conflict-disjoint-merge.util', () => {
       const kept = keptTimeDeltasOfRemoteWins(
         [{ conflict: conflict([remoteDone]), winner: 'remote' }],
         'task',
+        ['local-delta', 'local-other', 'local-other'],
       );
       expect([...kept.opIds]).toEqual(['local-delta']);
       expect(kept.clockToDominate).toEqual({ A: 5 });
+      expect(kept.localOpsToReject).toEqual(['local-other']);
     });
 
     // A local win's snapshot already carries the delta's time.
@@ -645,20 +646,11 @@ describe('conflict-disjoint-merge.util', () => {
         const kept = keptTimeDeltasOfRemoteWins(
           [{ conflict: conflict([remoteDone]), winner: 'remote' }, other],
           'task',
+          ['local-delta'],
         );
         expect(kept.opIds.size).toBe(0);
+        expect(kept.localOpsToReject).toEqual(['local-delta']);
       }
-    });
-
-    it('rebases only when something was kept', async () => {
-      const store = jasmine.createSpyObj('store', ['rebasePendingLocalOps']);
-      await rebaseKeptTimeDeltas(store, { opIds: new Set(), clockToDominate: {} });
-      expect(store.rebasePendingLocalOps).not.toHaveBeenCalled();
-      await rebaseKeptTimeDeltas(store, {
-        opIds: new Set(['local-delta']),
-        clockToDominate: { A: 5 },
-      });
-      expect(store.rebasePendingLocalOps).toHaveBeenCalledWith(['local-delta'], { A: 5 });
     });
   });
 });

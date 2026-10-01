@@ -403,12 +403,19 @@ export const timeDeltasCommutingWithRemoteWin = (params: {
     : [];
 };
 
+/** Local time deltas kept beside a remote win, and the clock they must follow. */
+export interface KeptTimeDeltas {
+  opIds: Set<string>;
+  clockToDominate: VectorClock;
+}
+
 /**
  * #10408: the local `syncTimeSpent` deltas that stay pending although the
  * remote side won, because they commute with every winner they conflict with
  * (`timeDeltasCommutingWithRemoteWin`). A delta that also sits in any other
  * conflict is not kept: a local win's snapshot already carries its time.
- * Returns the kept ids and the clock of the winners they must follow.
+ * Returns the kept ids, the clock of the winners they must follow, and
+ * `localOpsToReject` deduplicated and without the kept ids.
  */
 export const keptTimeDeltasOfRemoteWins = (
   resolutions: readonly {
@@ -421,7 +428,8 @@ export const keptTimeDeltasOfRemoteWins = (
     winner: 'local' | 'remote';
   }[],
   payloadKey: string,
-): { opIds: Set<string>; clockToDominate: VectorClock } => {
+  localOpsToReject: readonly string[],
+): KeptTimeDeltas & { localOpsToReject: string[] } => {
   const commuting = new Set<string>();
   const excluded = new Set<string>();
   let clockToDominate: VectorClock = {};
@@ -441,26 +449,11 @@ export const keptTimeDeltasOfRemoteWins = (
     }
   }
   const opIds = new Set([...commuting].filter((opId) => !excluded.has(opId)));
-  return { opIds, clockToDominate };
-};
-
-/**
- * Moves the kept deltas past their winners in place (id, seq and payload
- * stay), so each uploads once and replays once. Skips the store when nothing
- * was kept: the rebase opens a write transaction.
- */
-export const rebaseKeptTimeDeltas = async (
-  store: {
-    rebasePendingLocalOps: (
-      opIds: readonly string[],
-      clockToDominate: VectorClock,
-    ) => Promise<unknown>;
-  },
-  kept: { opIds: Set<string>; clockToDominate: VectorClock },
-): Promise<void> => {
-  if (kept.opIds.size > 0) {
-    await store.rebasePendingLocalOps([...kept.opIds], kept.clockToDominate);
-  }
+  return {
+    opIds,
+    clockToDominate,
+    localOpsToReject: [...new Set(localOpsToReject)].filter((opId) => !opIds.has(opId)),
+  };
 };
 
 /**

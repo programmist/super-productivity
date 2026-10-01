@@ -112,11 +112,11 @@ import {
   isCommutingTimeDeltaCrossing,
   isDisjointMergeEligible,
   keptTimeDeltasOfRemoteWins,
-  rebaseKeptTimeDeltas,
   mergeChangedFields,
   synthesizeMergedChanges,
   NOISE_FIELDS,
 } from './conflict-disjoint-merge.util';
+import { finalizeConflictRejections } from './conflict-rejection-finalize.util';
 import { RECREATE_FALLBACK } from '../core/recreate-fallback.const';
 import { areCommutingSectionOperations } from './section-conflict-commutativity.util';
 import { areCommutingReorderAndContentOperations } from './reorder-conflict.util';
@@ -1003,10 +1003,11 @@ export class ConflictResolutionService {
       ...additionalLocalIntentOps,
     ]);
     const { remoteWinnerAffectedEntityKeys } = lwwPartitions;
-    // #10408: kept deltas are rebased past their winners below, not rejected.
-    const kept = keptTimeDeltasOfRemoteWins(resolutions, this._resolvePayloadKey('TASK'));
-    const localOpsToReject = [...new Set(lwwPartitions.localOpsToReject)].filter(
-      (opId) => !kept.opIds.has(opId),
+    // #10408: kept deltas are rebased past their winners on finalize, not rejected.
+    const { localOpsToReject, ...kept } = keptTimeDeltasOfRemoteWins(
+      resolutions,
+      this._resolvePayloadKey('TASK'),
+      lwwPartitions.localOpsToReject,
     );
     const localOpsToRejectSet = new Set(localOpsToReject);
     const protectedLocalResolutionOpIds = new Set<string>(kept.opIds);
@@ -1835,19 +1836,11 @@ export class ConflictResolutionService {
 
     // Finalize only after every chosen resolution entered state. If reducer or
     // archive work fails, the originals stay eligible for a clean retry.
-    if (remainingLocalOpsToReject.length > 0) {
-      await this.opLogStore.markRejected(remainingLocalOpsToReject);
-      OpLog.normal(
-        `ConflictResolutionService: Marked ${remainingLocalOpsToReject.length} local ops as rejected`,
-      );
-    }
-    if (remainingRemoteOpsToReject.length > 0) {
-      await this.opLogStore.markRejected(remainingRemoteOpsToReject);
-      OpLog.normal(
-        `ConflictResolutionService: Marked ${remainingRemoteOpsToReject.length} remote ops as rejected`,
-      );
-    }
-    await rebaseKeptTimeDeltas(this.opLogStore, kept);
+    await finalizeConflictRejections(this.opLogStore, {
+      localOpIds: remainingLocalOpsToReject,
+      remoteOpIds: remainingRemoteOpsToReject,
+      kept,
+    });
 
     // ─────────────────────────────────────────────────────────────────────────
     // STEP 5: Show non-blocking notification
