@@ -66,7 +66,13 @@ export const diffEntityWrites = (before: unknown, after: unknown): EntityWrites 
 
 const actionWrites = new WeakMap<object, EntityWrites>();
 let opWrites = new Map<string, EntityWrites>();
-const incomingOpIds = new Set<string>();
+/** Per index (the harness swaps one per device): the op ids derived as incoming. */
+const incomingOpIdsByIndex = new WeakMap<Map<string, EntityWrites>, Set<string>>();
+const incomingOpIds = (): Set<string> => {
+  let ids = incomingOpIdsByIndex.get(opWrites);
+  if (!ids) incomingOpIdsByIndex.set(opWrites, (ids = new Set()));
+  return ids;
+};
 
 /** Spike measurement: per action type, how opaque-op lookups were served. */
 export interface LookupCounts {
@@ -111,7 +117,7 @@ export const countOpaqueLookup = (
   const empty = !derived || Object.keys(derived).length === 0;
   const kind: LookupKind = !opWrites.has(op.id)
     ? 'miss'
-    : incomingOpIds.has(op.id)
+    : incomingOpIds().has(op.id)
       ? empty
         ? 'emptyIncoming'
         : 'incoming'
@@ -154,7 +160,7 @@ export const deriveIncomingWrites = (
 ): void => {
   if (!isEnabled || opWrites.has(opId)) return;
   opWrites.set(opId, diffEntityWrites(before, apply(before)));
-  incomingOpIds.add(opId);
+  incomingOpIds().add(opId);
 };
 
 /** The fields `opId` wrote on one entity, or undefined if it is not indexed. */
@@ -190,6 +196,7 @@ export const swapDerivedFieldIndex = (
 /** Drops the whole index: a restart loses it (criterion 4). */
 export const resetDerivedFieldIndex = (): void => {
   opWrites.clear();
+  incomingOpIds().clear();
 };
 
 /**
@@ -212,7 +219,10 @@ export const deriveIncomingConflictWrites = <
     try {
       deriveIncomingWrites(op.id, rootState, (state) => reduce(state, op));
     } catch {
-      // A reducer that throws on a copy leaves the op opaque.
+      // Only reached without the root reducer's failure guard: the guard
+      // (`reducerFailureGuardMetaReducer`) swallows a throw, returns the
+      // previous state and reports a devError, so such an op is indexed with
+      // an empty diff (still opaque) and counted as `emptyIncoming`.
     }
   }
 };

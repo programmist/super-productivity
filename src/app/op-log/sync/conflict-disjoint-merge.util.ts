@@ -108,7 +108,9 @@ const extractOpChanges = (
   // feature state is the sole exception: it uses the '*' sentinel and has no
   // embedded id by design.
   if (entityId !== '*' && embeddedId !== entityId) {
-    return capturedChanges;
+    // Option (6) spike: also an op whose payload does not name the entity
+    // (e.g. `planTasksForToday`'s `taskIds`).
+    return orDerivedChanges(op, entityId, capturedChanges);
   }
   const adapterChanges = extractUpdateChanges(op.payload, payloadKey, entityId);
   const safeAdapterChanges = asSafeUpdateChanges(adapterChanges);
@@ -129,14 +131,24 @@ const extractOpChanges = (
       return restored;
     }
   }
-  if (Object.keys(capturedChanges).length === 0 && !isAdditiveTimeOp(op)) {
-    // Option (6) spike: read an otherwise opaque op's fields from the
-    // derived index, as if it had carried `{ id, changes }`.
-    const derived = derivedChangesFor(op.id, op.entityType, entityId);
-    countOpaqueLookup(op, entityId, derived);
-    if (derived) return derived;
+  return orDerivedChanges(op, entityId, capturedChanges);
+};
+
+/**
+ * Option (6) spike: read an otherwise opaque op's fields from the derived
+ * index, as if it had carried `{ id, changes }`.
+ */
+const orDerivedChanges = (
+  op: Operation,
+  entityId: string,
+  capturedChanges: Record<string, unknown>,
+): Record<string, unknown> => {
+  if (Object.keys(capturedChanges).length > 0 || isAdditiveTimeOp(op)) {
+    return capturedChanges;
   }
-  return capturedChanges;
+  const derived = derivedChangesFor(op.id, op.entityType, entityId);
+  countOpaqueLookup(op, entityId, derived);
+  return derived ?? capturedChanges;
 };
 
 /**

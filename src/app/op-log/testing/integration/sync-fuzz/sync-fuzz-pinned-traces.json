@@ -104,7 +104,7 @@
   },
   {
     "class": "remote-win-keeps-local-edit",
-    "ref": "#10260",
+    "ref": "fixed by the option (6) spike (#10393 queue item 4; draft, regression pin)",
     "name": "a task rename that loses to tracking stays on its device only",
     "steps": [
       {
@@ -125,8 +125,7 @@
         "a": ["track", "t13", 2000]
       }
     ],
-    "primary": "divergence:.task.entities.*.title",
-    "signatures": ["divergence:.task.entities.*.title", "field-reverted:task.title"],
+    "signatures": [],
     "rejections": []
   },
   {
