@@ -76,39 +76,49 @@ export interface LookupCounts {
   emptyIncoming: number;
   miss: number;
 }
-const lookupCounts = new Map<string, LookupCounts>();
-const countedLookups = new Set<string>();
+type LookupKind = keyof LookupCounts;
+/** `${opId}|${entityId}` → [actionType, how its latest lookup was served]. */
+const lookups = new Map<string, [string, LookupKind]>();
 
-export const getLookupCounts = (): Record<string, LookupCounts> =>
-  Object.fromEntries(lookupCounts);
-
-export const resetLookupCounts = (): void => {
-  lookupCounts.clear();
-  countedLookups.clear();
+export const getLookupCounts = (): Record<string, LookupCounts> => {
+  const counts: Record<string, LookupCounts> = {};
+  for (const [actionType, kind] of lookups.values()) {
+    counts[actionType] ??= {
+      capture: 0,
+      emptyCapture: 0,
+      incoming: 0,
+      emptyIncoming: 0,
+      miss: 0,
+    };
+    counts[actionType][kind]++;
+  }
+  return counts;
 };
 
-/** Counts one lookup per op and entity (the resolver repeats them). */
+export const resetLookupCounts = (): void => lookups.clear();
+
+/**
+ * Records how a lookup was served; the latest lookup of an op and entity
+ * wins, since the resolver checks opacity before it derives. LWW rows are
+ * never indexed (D9) and are not counted.
+ */
 export const countOpaqueLookup = (
   op: { id: string; actionType: string },
   entityId: string,
   derived: Record<string, unknown> | undefined,
 ): void => {
-  const key = `${op.id}|${entityId}`;
-  if (!isEnabled || countedLookups.has(key)) return;
-  countedLookups.add(key);
-  const counts = lookupCounts.get(op.actionType) ?? {
-    capture: 0,
-    emptyCapture: 0,
-    incoming: 0,
-    emptyIncoming: 0,
-    miss: 0,
-  };
-  const incoming = incomingOpIds.has(op.id);
+  if (!isEnabled || op.actionType.endsWith('LWW Update')) return;
   const empty = !derived || Object.keys(derived).length === 0;
-  if (!opWrites.has(op.id)) counts.miss++;
-  else if (incoming) counts[empty ? 'emptyIncoming' : 'incoming']++;
-  else counts[empty ? 'emptyCapture' : 'capture']++;
-  lookupCounts.set(op.actionType, counts);
+  const kind: LookupKind = !opWrites.has(op.id)
+    ? 'miss'
+    : incomingOpIds.has(op.id)
+      ? empty
+        ? 'emptyIncoming'
+        : 'incoming'
+      : empty
+        ? 'emptyCapture'
+        : 'capture';
+  lookups.set(`${op.id}|${entityId}`, [op.actionType, kind]);
 };
 
 let isEnabled = true;
