@@ -27,7 +27,7 @@ import {
 } from '@sp/sync-core';
 import { getOpEntityIds, isMultiEntityOperation } from '../util/get-op-entity-ids.util';
 import { applyClearedFields } from '../../util/cleared-update-fields';
-import { derivedChangesFor } from './derived-field-index';
+import { countOpaqueLookup, derivedChangesFor } from './derived-field-index';
 
 /** Metadata timestamps excluded from real-field overlap checks. */
 export const NOISE_FIELDS: ReadonlySet<string> = new Set<string>([
@@ -133,6 +133,7 @@ const extractOpChanges = (
     // Option (6) spike: read an otherwise opaque op's fields from the
     // derived index, as if it had carried `{ id, changes }`.
     const derived = derivedChangesFor(op.id, op.entityType, entityId);
+    countOpaqueLookup(op, entityId, derived);
     if (derived) return derived;
   }
   return capturedChanges;

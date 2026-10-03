@@ -66,6 +66,50 @@ export const diffEntityWrites = (before: unknown, after: unknown): EntityWrites 
 
 const actionWrites = new WeakMap<object, EntityWrites>();
 let opWrites = new Map<string, EntityWrites>();
+const incomingOpIds = new Set<string>();
+
+/** Spike measurement: per action type, how opaque-op lookups were served. */
+export interface LookupCounts {
+  capture: number;
+  emptyCapture: number;
+  incoming: number;
+  emptyIncoming: number;
+  miss: number;
+}
+const lookupCounts = new Map<string, LookupCounts>();
+const countedLookups = new Set<string>();
+
+export const getLookupCounts = (): Record<string, LookupCounts> =>
+  Object.fromEntries(lookupCounts);
+
+export const resetLookupCounts = (): void => {
+  lookupCounts.clear();
+  countedLookups.clear();
+};
+
+/** Counts one lookup per op and entity (the resolver repeats them). */
+export const countOpaqueLookup = (
+  op: { id: string; actionType: string },
+  entityId: string,
+  derived: Record<string, unknown> | undefined,
+): void => {
+  const key = `${op.id}|${entityId}`;
+  if (!isEnabled || countedLookups.has(key)) return;
+  countedLookups.add(key);
+  const counts = lookupCounts.get(op.actionType) ?? {
+    capture: 0,
+    emptyCapture: 0,
+    incoming: 0,
+    emptyIncoming: 0,
+    miss: 0,
+  };
+  const incoming = incomingOpIds.has(op.id);
+  const empty = !derived || Object.keys(derived).length === 0;
+  if (!opWrites.has(op.id)) counts.miss++;
+  else if (incoming) counts[empty ? 'emptyIncoming' : 'incoming']++;
+  else counts[empty ? 'emptyCapture' : 'capture']++;
+  lookupCounts.set(op.actionType, counts);
+};
 
 let isEnabled = true;
 
@@ -100,6 +144,7 @@ export const deriveIncomingWrites = (
 ): void => {
   if (!isEnabled || opWrites.has(opId)) return;
   opWrites.set(opId, diffEntityWrites(before, apply(before)));
+  incomingOpIds.add(opId);
 };
 
 /** The fields `opId` wrote on one entity, or undefined if it is not indexed. */
