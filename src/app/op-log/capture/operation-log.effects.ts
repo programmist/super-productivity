@@ -1,3 +1,4 @@
+import { bindOpWrites } from '../sync/derived-field-index';
 import { inject, Injectable } from '@angular/core';
 import { createEffect } from '@ngrx/effects';
 import type { DeferredLocalActionsPort } from '@sp/sync-core';
@@ -339,6 +340,8 @@ export class OperationLogEffects implements DeferredLocalActionsPort {
           timestamp: operationTimestamp,
           schemaVersion: CURRENT_SCHEMA_VERSION,
         };
+        // Option (6) spike: bind the capture-time field diff to the op id.
+        bindOpWrites(op.id, action);
 
         // CHECKPOINT A: Validate payload before persisting
         const validationResult = validateOperationPayload(op);

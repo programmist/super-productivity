@@ -1,3 +1,4 @@
+import { recordActionWrites } from '../sync/derived-field-index';
 import { Action, ActionReducer } from '@ngrx/store';
 import {
   isPersistentAction,
@@ -266,6 +267,8 @@ export const operationCaptureMetaReducer = <S, A extends Action = Action>(
 
     // Only process persistent, non-remote actions
     if (isPersistentAction(action) && !(action as PersistentAction).meta.isRemote) {
+      // Option (6) spike: the fields this device's action wrote.
+      recordActionWrites(action, state, afterState);
       // Buffer actions during sync replay - they'll be processed after sync completes
       // with fresh vector clocks that include the newly-applied remote operations.
       // This prevents superseded operations that would immediately conflict.

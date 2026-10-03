@@ -25,7 +25,9 @@ import {
   type LwwContentConflict,
 } from './lww-conflict-summary.util';
 import type { SelectByIdFactory } from '../core/entity-registry-host.types';
-import { Store } from '@ngrx/store';
+import { ReducerManager, Store } from '@ngrx/store';
+import { convertOpToAction } from '../apply/operation-converter.util';
+import { deriveIncomingConflictWrites } from './derived-field-index';
 import {
   ActionType,
   EntityConflict,
@@ -110,6 +112,7 @@ import {
 import type { Task } from '../../features/tasks/task.model';
 import {
   hasOpaqueChanges,
+  isOpaqueChangeOp,
   isCommutingTimeDeltaCrossing,
   isDisjointMergeEligible,
   isNoiseOnlySide,
@@ -507,6 +510,25 @@ export class ConflictResolutionService {
   private syncLogger = inject(SYNC_LOGGER);
   private entityRegistry = inject(ENTITY_REGISTRY);
   private injector = inject(Injector);
+  private reducerManager = inject(ReducerManager);
+
+  /** Option (6) spike: derived field sets of incoming opaque ops. */
+  private async _deriveIncomingWrites(conflicts: EntityConflict[]): Promise<void> {
+    const remoteOps = conflicts.flatMap((c) =>
+      c.remoteOps.filter((op) => !isLwwUpdatePayload(op.payload)),
+    );
+    if (remoteOps.length === 0) return;
+    const root = await firstValueFrom(this.store);
+    const reduce = this.reducerManager.getValue();
+    deriveIncomingConflictWrites(
+      remoteOps,
+      root,
+      (state, op) => reduce(state, convertOpToAction(op)),
+      (op) =>
+        !!op.entityId &&
+        isOpaqueChangeOp(op, this._resolvePayloadKey(op.entityType), op.entityId),
+    );
+  }
 
   // ═══════════════════════════════════════════════════════════════════════════
   // LWW OPERATION FACTORY METHODS
@@ -975,6 +997,7 @@ export class ConflictResolutionService {
     // ─────────────────────────────────────────────────────────────────────────
     // STEP 1: Resolve each conflict using LWW
     // ─────────────────────────────────────────────────────────────────────────
+    await this._deriveIncomingWrites(conflicts); // Option (6) spike
     const {
       lwwResolutions: resolutions,
       mergedResolutions,

@@ -24,6 +24,7 @@ import {
   VectorClockComparison,
 } from '../../core/util/vector-clock';
 import { isMultiEntityOperation } from '../util/get-op-entity-ids.util';
+import { derivedChangesFor } from './derived-field-index';
 import {
   isAdditiveTimeOp,
   isDisjointMergeEligible,
@@ -72,7 +73,13 @@ const isChangesShapedOp = (
   entityId: string,
 ): boolean => {
   const entity = extractActionPayload(op.payload)?.[payloadKey];
-  return isRecord(entity) && entity['id'] === entityId && isRecord(entity['changes']);
+  return (
+    (isRecord(entity) && entity['id'] === entityId && isRecord(entity['changes'])) ||
+    // Option (6) spike: an op with no entity payload at all (otherwise opaque)
+    // reads its derived post-op values; a flat snapshot stays refused.
+    (!(isRecord(entity) && entity['id'] === entityId) &&
+      derivedChangesFor(op.id, op.entityType, entityId) !== undefined)
+  );
 };
 
 export interface FieldPatchSides {

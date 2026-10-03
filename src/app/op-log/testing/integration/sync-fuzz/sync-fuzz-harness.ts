@@ -77,6 +77,7 @@ import {
 import { AppStateActions } from '../../../../root-store/app-state/app-state.actions';
 import { appStateFeature } from '../../../../root-store/app-state/app-state.reducer';
 import { META_REDUCERS } from '../../../../root-store/meta/meta-reducer-registry';
+import { EntityWrites, swapDerivedFieldIndex } from '../../../sync/derived-field-index';
 import { ArchiveOperationHandlerEffects } from '../../../apply/archive-operation-handler.effects';
 import { ArchiveOperationHandler } from '../../../apply/archive-operation-handler.service';
 import { HydrationStateService } from '../../../apply/hydration-state.service';
@@ -378,6 +379,8 @@ export interface FuzzDevice {
    */
   clientId: string;
   clientIdStale?: boolean;
+  /** Option (6) spike: this device's in-memory derived field index. */
+  derivedFieldIndex?: Map<string, EntityWrites>;
   readonly client: FakeSuperSyncClient;
   readonly db: IndexedDbOpLogAdapter;
   state: object;
@@ -751,6 +754,7 @@ export class SyncFuzzHarness {
       throw new Error(`SyncFuzz: ${device.name} while ${this._current.name} is active`);
     }
     this._current = device;
+    swapDerivedFieldIndex((device.derivedFieldIndex ??= new Map()));
     TestBed.inject(Store).dispatch({ type: FUZZ_SET_STATE, state: device.state });
     this._restoreFields(device.fields);
     try {
@@ -759,6 +763,7 @@ export class SyncFuzzHarness {
       await this._settle();
       device.state = await firstValueFrom(TestBed.inject(Store));
       device.fields = this._saveFields();
+      swapDerivedFieldIndex(new Map());
       this._current = undefined;
       this._checkServiceFields();
     }
@@ -823,6 +828,8 @@ export class SyncFuzzHarness {
   async restart(device: FuzzDevice): Promise<void> {
     device.state = this._pristineState;
     device.fields = undefined;
+    // The spike's index is in memory only: a restart loses it.
+    device.derivedFieldIndex = new Map();
     await this.as(device, () =>
       TestBed.inject(OperationLogHydratorService).hydrateStore(),
     );
