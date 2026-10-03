@@ -27,6 +27,7 @@ import { isMultiEntityOperation } from '../util/get-op-entity-ids.util';
 import { derivedChangesFor } from './derived-field-index';
 import {
   isAdditiveTimeOp,
+  isDerivedOnlyOp,
   isDisjointMergeEligible,
   isOpaqueChangeOp,
   mergeChangedFields,
@@ -142,6 +143,16 @@ export const isFieldPatchEligible = (sides: FieldPatchSides): boolean => {
   if (
     allOps.some((op) => op.actionType === ActionType.TASK_REMOVE_TIME_SPENT) ||
     remoteOps.some(isSyncTimeSpentOp)
+  ) {
+    return false;
+  }
+  // Option (6) spike: an op read from the derived index stays out of a patch
+  // beside a local time delta. keptLocalTimeDeltas keeps every delta, without
+  // #10462's rules for a delta a remote clock covers or the server rejected,
+  // which the remote-win path (timeDeltasSurvivingRemoteWins) applies.
+  if (
+    localOps.some(isSyncTimeSpentOp) &&
+    allOps.some((op) => isDerivedOnlyOp(op, payloadKey, entityId))
   ) {
     return false;
   }

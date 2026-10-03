@@ -163,6 +163,19 @@ const readClearedFields = (payload: unknown): string[] | undefined => {
 };
 
 /**
+ * Option (6) spike: an op whose fields come only from the derived index (its
+ * payload names no entity with the conflict target's id).
+ */
+export const isDerivedOnlyOp = (
+  op: Operation,
+  payloadKey: string,
+  entityId: string,
+): boolean =>
+  !isAdditiveTimeOp(op) &&
+  extractEntityFromPayload(op.payload, payloadKey, entityId)?.['id'] !== entityId &&
+  derivedChangesFor(op.id, op.entityType, entityId) !== undefined;
+
+/**
  * Union of the changed-field maps across a set of ops on one side.
  *
  * DELETE ops carry no meaningful field changes and are skipped —
@@ -384,6 +397,11 @@ export const isCommutingTimeDeltaCrossing = (params: {
   ([...params.localOps, ...params.remoteOps].some(
     (op) => op.actionType === ActionType.TIME_TRACKING_SYNC_TIME_SPENT,
   ) &&
+    // Option (6) spike: a derived op never makes a time-delta crossing
+    // commute; the crossing keeps #10462's conflict path, as on master.
+    ![...params.localOps, ...params.remoteOps].some((op) =>
+      isDerivedOnlyOp(op, params.payloadKey, params.entityId),
+    ) &&
     isDisjointMergeEligible(params));
 
 /**
