@@ -510,14 +510,14 @@ export class ConflictResolutionService {
   private syncLogger = inject(SYNC_LOGGER);
   private entityRegistry = inject(ENTITY_REGISTRY);
   private injector = inject(Injector);
-  private reducerManager = inject(ReducerManager);
+  private reducerManager = inject(ReducerManager, { optional: true });
 
   /** Option (6) spike: derived field sets of incoming opaque ops. */
   private async _deriveIncomingWrites(conflicts: EntityConflict[]): Promise<void> {
     const remoteOps = conflicts.flatMap((c) =>
       c.remoteOps.filter((op) => !isLwwUpdatePayload(op.payload)),
     );
-    if (remoteOps.length === 0) return;
+    if (remoteOps.length === 0 || !this.reducerManager) return;
     const root = await firstValueFrom(this.store);
     const reduce = this.reducerManager.getValue();
     deriveIncomingConflictWrites(
