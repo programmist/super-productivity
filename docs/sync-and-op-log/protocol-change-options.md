@@ -78,20 +78,52 @@ not membership derivation.
 ## How resolution reaches the fleet
 
 On SuperSync, the server detects conflicts from vector clocks, entity ids and
-action type (concurrent time deltas pass; `conflict.ts`); it never resolves on
-payload contents, and with E2EE it cannot. The server accepts the first of two
-concurrent ops, so only the device holding the other one resolves: on download,
-against its pending op, or after a rejected upload. It uploads resolution rows
-(`'patch'` or `'replace'`); every other device applies them in server order.
+action type; it never resolves on payload contents, and with E2EE it cannot.
+It compares an upload only with the latest stored op of each declared entity
+(`resolveConflictForExistingOp`, `conflict.ts`) and accepts it only if its
+clock dominates that op. It also accepts a concurrent op without a check in
+three cases: both ops are time deltas, the op is a full-state op, or the two ops
+declare no common entity. The last case covers undeclared cross-entity list
+writes (`docs/plans/2026-09-26-sync-architecture-review.md`). Resolution rows
+(`'patch'` or `'replace'`) go through the same check; they pass because the
+resolver merges both sides' clocks.
+
+**Correction (option (6) spike, 2026-10-03).** An earlier version of this
+section said "one device resolves, everyone applies its rows", and concluded
+that a single resolver gives convergence. That claim is wrong:
+
+- **Every device holding a losing op resolves.** Each one resolves its own
+  crossing: on download against its pending op, after a rejected upload, or in
+  a no-pending crossing (#9073). With three devices editing one task offline,
+  the second and third uploader each resolve the same entity. A third device
+  that downloaded only the first op before the second device's row landed
+  resolves a different pair. Its row is then rejected as concurrent, and it
+  resolves again (`RejectedOpsHandlerService`,
+  `SupersededOperationResolverService`).
+- **The server still keeps one chain per declared entity.** Every row it
+  accepts dominates the one before, and every device applies that chain in
+  server order. So the replicas end up equal on declared entities, but their
+  content is whatever the resolver of each accepted row produced. An old
+  resolver's row is accepted and propagates.
+- **Where ops can stay concurrent, every receiver re-resolves.** The server
+  lets these through: concurrent time deltas, full-state ops, and undeclared
+  cross-entity writes. Every device that receives them resolves them again, so
+  two resolver versions can apply different results. This needs a test with
+  several resolving clients, not an argument from a single resolver.
+
 Two consequences:
 
-- **Resolve-time changes** (what the resolving device emits) converge in a
-  mixed fleet on SuperSync: one device resolves, everyone applies its rows. An
-  old client that resolves still loses data the old way. On file providers
-  there is no referee, so both devices can resolve the same crossing; an old
-  and a new resolver can then emit different rows, which the convergence
-  contract (`conflict-journal-and-review.md`) forbids. Unverified, since the
-  harness cannot run released clients (`lww-field-level-resolution.md`).
+- **Resolve-time changes** (what the resolving device emits) converge on
+  declared entities in a mixed fleet on SuperSync: the server serializes rows
+  per entity. They do not preserve content in a mixed fleet: an old client
+  that resolves still loses data the old way, and its row is the one everyone
+  applies. Where ops stay concurrent (above), each device re-resolves locally,
+  so convergence needs every resolver to reach the same result. On file
+  providers there is no referee, so every device that downloads a crossing
+  resolves it. An old and a new resolver can then emit different rows, which
+  the convergence contract (`conflict-journal-and-review.md`) forbids. This is
+  unverified, since the harness cannot run released clients
+  (`lww-field-level-resolution.md`).
 - **Apply-time changes** (how a device applies an incoming op, e.g. "skip a
   field whose stored timestamp is newer") diverge in a mixed fleet: old
   clients apply the whole op, new clients skip. They need every device on the

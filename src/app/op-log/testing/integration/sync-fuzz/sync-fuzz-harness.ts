@@ -77,7 +77,11 @@ import {
 import { AppStateActions } from '../../../../root-store/app-state/app-state.actions';
 import { appStateFeature } from '../../../../root-store/app-state/app-state.reducer';
 import { META_REDUCERS } from '../../../../root-store/meta/meta-reducer-registry';
-import { EntityWrites, swapDerivedFieldIndex } from '../../../sync/derived-field-index';
+import {
+  EntityWrites,
+  setDerivedFieldIndexEnabled,
+  swapDerivedFieldIndex,
+} from '../../../sync/derived-field-index';
 import { ArchiveOperationHandlerEffects } from '../../../apply/archive-operation-handler.effects';
 import { ArchiveOperationHandler } from '../../../apply/archive-operation-handler.service';
 import { HydrationStateService } from '../../../apply/hydration-state.service';
@@ -369,6 +373,12 @@ type FieldValues = Map<object, Record<string, unknown>>;
 
 const fieldsOf = (instance: object): Record<string, unknown> =>
   instance as unknown as Record<string, unknown>;
+
+/**
+ * Option (6) spike: devices that resolve with master's logic (no derived
+ * field index), for the mixed-resolver measurement. Empty by default.
+ */
+const SPIKE_LEGACY_RESOLVER_DEVICES: ReadonlySet<string> = new Set<string>([]);
 
 export interface FuzzDevice {
   readonly name: string;
@@ -755,6 +765,7 @@ export class SyncFuzzHarness {
     }
     this._current = device;
     swapDerivedFieldIndex((device.derivedFieldIndex ??= new Map()));
+    setDerivedFieldIndexEnabled(!SPIKE_LEGACY_RESOLVER_DEVICES.has(device.name));
     TestBed.inject(Store).dispatch({ type: FUZZ_SET_STATE, state: device.state });
     this._restoreFields(device.fields);
     try {
@@ -764,6 +775,7 @@ export class SyncFuzzHarness {
       device.state = await firstValueFrom(TestBed.inject(Store));
       device.fields = this._saveFields();
       swapDerivedFieldIndex(new Map());
+      setDerivedFieldIndexEnabled(true);
       this._current = undefined;
       this._checkServiceFields();
     }
