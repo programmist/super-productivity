@@ -5,7 +5,10 @@ import {
 } from '@sp/sync-providers/onedrive';
 import { OneDrivePrivateCfg } from './onedrive.model';
 import type { SyncCredentialStorePort } from '@sp/sync-providers/credential-store';
-import { UploadRevToMatchMismatchAPIError } from '@sp/sync-providers/errors';
+import {
+  NoRevAPIError,
+  UploadRevToMatchMismatchAPIError,
+} from '@sp/sync-providers/errors';
 
 describe('OneDrive', () => {
   let provider: PackageOneDrive;
@@ -580,6 +583,31 @@ describe('OneDrive', () => {
       expect(remoteBody).toBe(concurrentBody);
     });
   }
+
+  it('downloads content without an ETag when the metadata revision stays unchanged', async () => {
+    cfgStoreSpy.load.and.resolveTo(baseCfg);
+    fetchSpy.and.callFake(async (url: string) =>
+      url.endsWith('/content')
+        ? new Response('unchanged content')
+        : Response.json({ eTag: '"rev-1"' }),
+    );
+
+    await expectAsync(provider.downloadFile('test.json')).toBeResolvedTo({
+      dataStr: 'unchanged content',
+      rev: '"rev-1"',
+    });
+  });
+
+  it('rejects a download when neither content nor metadata supplies a revision', async () => {
+    cfgStoreSpy.load.and.resolveTo(baseCfg);
+    fetchSpy.and.callFake(async (url: string) =>
+      url.endsWith('/content') ? new Response('content') : Response.json({}),
+    );
+
+    await expectAsync(provider.downloadFile('test.json')).toBeRejectedWithError(
+      NoRevAPIError,
+    );
+  });
 
   it('should deduplicate concurrent token refresh requests', async () => {
     let refreshCallCount = 0;
