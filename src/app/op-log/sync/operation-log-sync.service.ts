@@ -501,19 +501,18 @@ export class OperationLogSyncService {
 
     const pendingAcknowledgementSeqs = result.pendingAcknowledgementSeqs ?? [];
     if (pendingAcknowledgementSeqs.length > 0) {
-      // #9074: the deferred ack is a local persist — a stale cycle must not
-      // mark ops synced after a destructive config change (they'd never
-      // re-upload to the new epoch's target).
+      // #9074: never acknowledge ops against a changed sync target.
       this.providerManager.assertSyncEpochUnchanged(
         options?.fenceEpoch,
         'deferred acknowledgement',
       );
-      await this.opLogStore.markSynced(pendingAcknowledgementSeqs);
+      await this.opLogStore.markSynced(
+        pendingAcknowledgementSeqs,
+        result.pendingAcknowledgementOriginals,
+      );
     }
 
-    // STEP 2: Handle server-rejected operations
-    // handleRejectedOps may create merged ops for concurrent modifications.
-    // These need to be uploaded, so we add them to localWinOpsCreated.
+    // STEP 2: resolve rejections and count merged ops needing upload.
     // Pass a download callback so the handler can trigger downloads for concurrent mods.
     //
     // NOTE: This must NOT run after a SYNC_IMPORT conflict dialog resolution (USE_LOCAL,

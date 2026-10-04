@@ -82,6 +82,7 @@ import {
 } from './operation-log-store-rows';
 import { LockService } from '../sync/lock.service';
 import { rebaseLocalClockOnDurable } from './operation-log-clock.util';
+import { acknowledgeOperations } from './acknowledge-operations.util';
 
 export interface MixedSourceOperationBatch {
   ops: readonly Operation[];
@@ -1805,18 +1806,14 @@ export class OperationLogStoreService implements RemoteOperationApplyStorePort<O
     return new Set(this._appliedOpIdsCache);
   }
 
-  async markSynced(seqs: number[]): Promise<void> {
+  async markSynced(
+    seqs: number[],
+    originals?: ReadonlyMap<string, Operation>,
+  ): Promise<void> {
     await this._ensureInit();
-    const now = Date.now();
-    await this._adapter.transaction([STORE_NAMES.OPS], 'readwrite', async (tx) => {
-      for (const seq of seqs) {
-        const entry = await tx.get<StoredOperationLogEntry>(STORE_NAMES.OPS, seq);
-        if (entry) {
-          entry.syncedAt = now;
-          await tx.put(STORE_NAMES.OPS, entry);
-        }
-      }
-    });
+    await this._adapter.transaction([STORE_NAMES.OPS], 'readwrite', (tx) =>
+      acknowledgeOperations(tx, seqs, originals),
+    );
     this._invalidateUnsyncedCache();
   }
 

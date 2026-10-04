@@ -1173,7 +1173,7 @@ describe('OperationLogSyncService', () => {
 
           expect(result.kind).toBe('completed');
           expect(setLastServerSeq).not.toHaveBeenCalled();
-          expect(opLogStoreSpy.markSynced).toHaveBeenCalledWith([1]);
+          expect(opLogStoreSpy.markSynced).toHaveBeenCalledWith([1], undefined);
         });
 
         it('should recover across cycles: defer REPAIR while pending ops exist, then apply it once acks drain (no livelock)', async () => {
@@ -1250,7 +1250,7 @@ describe('OperationLogSyncService', () => {
           );
           // … the cursor stays behind it, but the ack still drains.
           expect(setLastServerSeq).not.toHaveBeenCalled();
-          expect(opLogStoreSpy.markSynced).toHaveBeenCalledWith([1]);
+          expect(opLogStoreSpy.markSynced).toHaveBeenCalledWith([1], undefined);
 
           // ── Cycle 2: cursor was frozen, so the REPAIR is re-downloaded ──
           remoteOpsProcessingServiceSpy.processRemoteOps.calls.reset();
@@ -7921,6 +7921,15 @@ describe('OperationLogSyncService', () => {
         timestamp: Date.now(),
         schemaVersion: 1,
       };
+      const originalDelta: Operation = {
+        ...piggybackedOp,
+        id: 'local-delta',
+        clientId: 'client-A',
+        actionType: ActionType.TIME_TRACKING_SYNC_TIME_SPENT,
+        payload: { taskId: 'task-1', date: '2026-10-03', duration: 3000 },
+        vectorClock: { clientA: 1 },
+      };
+      const originals = new Map([[originalDelta.id, originalDelta]]);
 
       uploadServiceSpy.uploadPendingOps.and.resolveTo({
         uploadedCount: 1,
@@ -7928,6 +7937,7 @@ describe('OperationLogSyncService', () => {
         rejectedCount: 0,
         rejectedOps: [],
         pendingAcknowledgementSeqs: [1],
+        pendingAcknowledgementOriginals: originals,
       });
 
       opLogStoreSpy.getUnsynced.and.resolveTo([]);
@@ -7962,7 +7972,7 @@ describe('OperationLogSyncService', () => {
           beforeFullStateApply: jasmine.any(Function),
         }),
       );
-      expect(opLogStoreSpy.markSynced).toHaveBeenCalledOnceWith([1]);
+      expect(opLogStoreSpy.markSynced).toHaveBeenCalledOnceWith([1], originals);
       expect(events).toEqual(['processRemoteOps', 'markSynced']);
       expect(result.kind).not.toBe('cancelled');
     });
@@ -8352,7 +8362,7 @@ describe('OperationLogSyncService', () => {
       const result = await service.uploadPendingOps({} as OperationSyncCapable);
 
       expect(result.kind).toBe('completed');
-      expect(opLogStoreSpy.markSynced).toHaveBeenCalledWith([7]);
+      expect(opLogStoreSpy.markSynced).toHaveBeenCalledWith([7], undefined);
     });
   });
 
