@@ -202,7 +202,7 @@
   },
   {
     "class": "whole-entity-lww-drops-fields",
-    "ref": "fixed by #10415 (regression pin); since #10422 the losing rename leaves only the kept delta, which uploads after one rejection and rebase",
+    "ref": "fixed by #10415 (regression pin); since #10422 the losing rename leaves only the kept delta; #10523 rebases it before upload, avoiding its concurrent rejection",
     "name": "tracked time is lost to a later concurrent rename",
     "steps": [
       {
@@ -224,10 +224,7 @@
       }
     ],
     "signatures": [],
-    "rejections": [
-      "CONFLICT_CONCURRENT [Task Shared] updateTask",
-      "CONFLICT_CONCURRENT [TimeTracking] Sync time spent"
-    ]
+    "rejections": ["CONFLICT_CONCURRENT [Task Shared] updateTask"]
   },
   {
     "class": "lww-update-skips-today-order",
@@ -290,7 +287,7 @@
   },
   {
     "class": "commuting-edit-beside-local-win",
-    "ref": "fixed by #10398 (regression pin)",
+    "ref": "fixed by #10398 (regression pin); #10523 rebases the kept delta before upload, avoiding its concurrent rejection",
     "name": "a task notes edit downloaded beside a done toggle the device wins survives on the writing device",
     "steps": [
       {
@@ -312,7 +309,7 @@
       }
     ],
     "signatures": [],
-    "rejections": ["CONFLICT_CONCURRENT [TimeTracking] Sync time spent"]
+    "rejections": []
   },
   {
     "class": "commuting-edit-beside-local-win",
@@ -1401,7 +1398,7 @@
   },
   {
     "class": "remote-win-patch-timestamp",
-    "ref": "fixed by #10422 (regression pin): review of #10428, finding 1",
+    "ref": "fixed by #10422 (regression pin): review of #10428, finding 1; #10523 rebases the kept delta before upload, avoiding its concurrent rejection",
     "name": "a remote win re-sends the loser's notes at their own time beside its own kept delta",
     "steps": [
       {
@@ -1435,7 +1432,7 @@
       }
     ],
     "signatures": [],
-    "rejections": ["CONFLICT_CONCURRENT [TimeTracking] Sync time spent"]
+    "rejections": []
   },
   {
     "class": "remote-win-patch-timestamp",
