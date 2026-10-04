@@ -119,7 +119,9 @@ import {
   aggregateEntityConflict,
   fieldPatchGroups,
   keptLocalTimeDeltas,
+  rebaseKeptTimeDeltas,
   timeDeltasSurvivingLww,
+  timeDeltasSurvivingRemoteWins,
   buildSurvivingFieldPatches,
 } from './conflict-field-patch.util';
 import { RECREATE_FALLBACK } from '../core/recreate-fallback.const';
@@ -173,6 +175,8 @@ interface ResolvedConflicts {
 }
 
 interface AutoResolveConflictsLwwOptions {
+  rebaseKeptTimeDeltas?: boolean;
+  assertFence?: (context: string) => void;
   callerHoldsOperationLogLock?: boolean;
   disableDisjointMerge?: boolean;
   remoteApplyLifecycleOwnedByCaller?: boolean;
@@ -933,20 +937,8 @@ export class ConflictResolutionService {
   /**
    * Automatically resolves conflicts using Last-Write-Wins (LWW) strategy.
    *
-   * ## How LWW Works
-   * 1. Compare timestamps of conflicting operations
-   * 2. The side with the newer timestamp wins
-   * 3. When timestamps are equal, remote wins (server-authoritative)
-   *
-   * ## When Local Wins
-   * When local state is newer, we can't just reject the remote ops - that would
-   * cause the local state to never sync to the server. Instead, we:
-   * 1. Reject BOTH local AND remote ops (they're now obsolete)
-   * 2. Create a NEW update operation with:
-   *    - Current entity state from NgRx store
-   *    - Merged vector clock (local + remote) + increment
-   *    - New timestamp
-   * 3. This new op will be uploaded on next sync, propagating local state
+   * Local winners reject the obsolete sides and emit a merged-clock update.
+   * Remote winners apply in the same batch as dependent non-conflicting ops.
    *
    * @param conflicts - Entity conflicts to auto-resolve
    * @param nonConflictingOps - Remote ops that don't conflict (batched for dependency sorting)
@@ -1025,8 +1017,7 @@ export class ConflictResolutionService {
       ...additionalLocalIntentOps,
     ]);
     const { remoteWinnerAffectedEntityKeys } = lwwPartitions;
-    // A patched conflict's local time deltas stay pending with immutable identity,
-    // and so do those beside a remote winner that writes no time (#10378).
+    // Keep deltas pending beside patched and time-preserving winners (#10378).
     const keptDeltas = keptLocalTimeDeltas([
       ...mergedResolutions.map((m) => m.conflict),
       ...timeDeltasSurvivingLww(resolutions, 'task', nonConflictingOps),
@@ -1574,10 +1565,7 @@ export class ConflictResolutionService {
       }
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // STEP 3b (SPAP-14, #10422): the field patches' re-sends were written last
-    // in the atomic batch above; they supersede the original local ops.
-    // ─────────────────────────────────────────────────────────────────────────
+    // STEP 3b: durable field patches supersede the original local ops (#10422).
     for (const merged of mergedResolutions) {
       for (const op of merged.conflict.localOps) {
         if (!localOpsToRejectSet.has(op.id) && !keptDeltas.opIds.has(op.id)) {
@@ -1587,16 +1575,27 @@ export class ConflictResolutionService {
       }
     }
 
+    if (options.rebaseKeptTimeDeltas && keptDeltas.opIds.size > 0) {
+      const rebased = new Map(
+        (
+          await rebaseKeptTimeDeltas(
+            this.opLogStore,
+            keptLocalTimeDeltas([
+              ...mergedResolutions.map((m) => m.conflict),
+              ...timeDeltasSurvivingRemoteWins(resolutions, 'task'),
+            ]),
+            [...writtenMergedOpIds],
+            options.assertFence,
+          )
+        ).map((op) => [op.id, op]),
+      );
+      for (let i = 0; i < allOpsToApply.length; i++) {
+        allOpsToApply[i] = rebased.get(allOpsToApply[i].id) ?? allOpsToApply[i];
+      }
+    }
     await rebaseKeptReorders(this.opLogStore, keptReorders, new Set(remoteOpsToReject));
 
-    // Re-sort the combined batch by durable seq: with fresh appends this is a
-    // no-op (append order = seq order), but a pending row reused from a prior
-    // failed attempt carries an older seq than rows appended fresh above, and
-    // status-blind hydration will replay it FIRST. Live apply must match that
-    // order or a crash replays a different history (e.g. a reused CREATE
-    // applied live after a fresh full snapshot of its container, but before it
-    // on replay). Ops without a recorded seq cannot exist here; sort them last
-    // deterministically rather than throwing mid-resolution.
+    // Match status-blind hydration order, including reused pending remote rows.
     allOpsToApply.sort(
       (a, b) =>
         (applySeqByOpId.get(a.id) ?? Number.MAX_SAFE_INTEGER) -

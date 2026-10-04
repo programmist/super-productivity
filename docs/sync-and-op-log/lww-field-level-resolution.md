@@ -418,11 +418,11 @@ holds the rules; `ConflictResolutionService._tryCreateFieldPatch` builds the op.
   their order on this device is not fixed, so that crossing can still diverge
   (residual, as before #10438).
 - **Time:** a local `syncTimeSpent` delta is neither in the patch nor
-  rejected. It stays pending with its original ID, clock and payload, even
-  when its upload response was lost. SuperSync checks duplicates before
-  conflicts, so only a received conflict rejection proves the delta was not
-  stored and permits `rebaseCommutingTimeDeltaRejections` to move its clock.
-  That path accepts an applied, acknowledged timeless patch (including the
+  rejected. File providers keep its original identity after a lost response.
+  SuperSync rebases kept deltas for released-client compatibility, with
+  [verified receipt recovery](time-delta-retry-recovery.md) if the original was
+  already stored. The separate `rebaseCommutingTimeDeltaRejections` path requires
+  an explicit conflict rejection and an applied, acknowledged timeless patch (including the
   same client's successor), only when all intervening task operations commute.
   It reads incoming patch keys, never their values (D5a). A rejected group of
   this client's deltas and replacement rows can also retry in its original
@@ -432,7 +432,7 @@ holds the rules; `ConflictResolutionService._tryCreateFieldPatch` builds the op.
   be complete through the state-cache frontier, so compaction cannot hide a
   scheduling or relationship change. An earlier stored row is skipped only
   when the pending operation's clock proves it was already observed; append
-  order alone is insufficient. Every moved
+  order alone is insufficient. On that rejection path, every moved
   row must be explicitly rejected; an accepted or ambiguously uploaded
   companion prevents the move. Incoming replacements, absolute time writes
   and unproven crossings retain their fallback. File providers retry unchanged

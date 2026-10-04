@@ -1667,6 +1667,70 @@ describe('ConflictResolutionService — disjoint-field merge', () => {
       expect(mockOpLogStore.rebasePendingLocalOps).not.toHaveBeenCalled();
     });
 
+    for (const { rebaseKeptTimeDeltas, disableDisjointMerge } of [
+      { rebaseKeptTimeDeltas: false, disableDisjointMerge: false },
+      { rebaseKeptTimeDeltas: true, disableDisjointMerge: false },
+      { rebaseKeptTimeDeltas: true, disableDisjointMerge: true },
+    ]) {
+      it(`rebases fresh resolution clocks with recovery=${rebaseKeptTimeDeltas}, snapshot=${disableDisjointMerge}`, async () => {
+        mockStore.select.and.returnValue(of({ id: 'task-1', title: 'A title' }));
+        const rename = title(
+          { id: 'l-rename', clientId: 'A', vectorClock: { A: 1 }, timestamp: 3000 },
+          'A title',
+        );
+        const delta = op({
+          id: 'l-delta',
+          clientId: 'A',
+          vectorClock: { A: 2 },
+          actionType: ActionType.TIME_TRACKING_SYNC_TIME_SPENT,
+          payload: {
+            actionPayload: { taskId: 'task-1', date: '2026-01-01', duration: 3000 },
+          },
+        });
+        const remote = title(
+          { id: 'r', clientId: 'B', vectorClock: { B: 1 }, timestamp: 2000 },
+          'B title',
+        );
+        mockOpLogStore.getOpById.and.callFake(async (id) =>
+          id === delta.id ? ({ source: 'local', op: delta, seq: 2 } as never) : undefined,
+        );
+        let rebasedSuccessor: Operation | undefined;
+        mockOpLogStore.rebasePendingLocalOps.and.callFake(async (ids, clock) => {
+          const successor = mergedOpArgs()!;
+          expect(ids).toEqual([delta.id, successor.id]);
+          expect(clock).toEqual({ B: 1 });
+          rebasedSuccessor = { ...successor, vectorClock: { A: 4, B: 1 } };
+          return [{ ...delta, vectorClock: { A: 3, B: 1 } }, rebasedSuccessor];
+        });
+        const assertFence = jasmine.createSpy('assertFence');
+        await service.autoResolveConflictsLWW(
+          [conflictOf([rename, delta], [remote])],
+          [],
+          {
+            rebaseKeptTimeDeltas,
+            disableDisjointMerge,
+            assertFence,
+          },
+        );
+        if (rebaseKeptTimeDeltas && !disableDisjointMerge) {
+          expect(mockOpLogStore.rebasePendingLocalOps).toHaveBeenCalledTimes(1);
+          expect(assertFence).toHaveBeenCalledOnceWith('kept time delta rebase');
+          const applied = mockOperationApplier.applyOperations.calls.mostRecent().args[0];
+          expect(applied.find((row) => row.id === rebasedSuccessor!.id)).toBe(
+            rebasedSuccessor,
+          );
+          expect(compareVectorClocks(rebasedSuccessor!.vectorClock, { A: 3, B: 1 })).toBe(
+            VectorClockComparison.GREATER_THAN,
+          );
+        } else {
+          expect(mockOpLogStore.rebasePendingLocalOps).not.toHaveBeenCalled();
+          expect(assertFence).not.toHaveBeenCalled();
+          const rejected = mockOpLogStore.markRejected.calls.allArgs().flat(2);
+          expect(rejected).not.toContain(delta.id);
+        }
+      });
+    }
+
     it('re-sends a pending edit beside a newer remote patch row that does not write its field (#10260, #10422)', async () => {
       mockStore.select.and.returnValue(
         of({ id: 'task-1', title: 'B title', isDone: true, doneOn: 900 }),

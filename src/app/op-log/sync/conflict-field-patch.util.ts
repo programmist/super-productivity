@@ -10,7 +10,7 @@
  * overlapping fields. Released clients since v18.15.0 apply `'patch'` as a
  * merge (`updateOne`), so no marker, wire key or schema bump is needed.
  *
- * No Angular, no I/O.
+ * No Angular; persistence is supplied by the caller.
  */
 
 import { deepEqual, extractActionPayload } from '@sp/sync-core';
@@ -18,7 +18,12 @@ import { ActionType, isLwwUpdatePayload, OpType } from '../core/operation.types'
 import type { EntityConflict, Operation } from '../core/operation.types';
 import type { EntityType } from '../core/operation.types';
 import { RECREATE_FALLBACK } from '../core/recreate-fallback.const';
-import { compareVectorClocks, VectorClockComparison } from '../../core/util/vector-clock';
+import {
+  compareVectorClocks,
+  mergeVectorClocks,
+  VectorClockComparison,
+  VectorClock,
+} from '../../core/util/vector-clock';
 import { isMultiEntityOperation } from '../util/get-op-entity-ids.util';
 import {
   isAdditiveTimeOp,
@@ -308,20 +313,70 @@ export const aggregateEntityConflict = (conflicts: EntityConflict[]): EntityConf
  * The local `syncTimeSpent` deltas of patched conflicts. They are not
  * rejected: rejecting one and re-sending a copy would add the time twice on
  * restart, since replay is status-blind. They stay pending with their original
- * ID, clock and payload: a missing acknowledgement is not proof that the server
- * did not store them.
- * Only an explicit server rejection permits rebasing for a later retry.
+ * ID and payload. File providers retain the clock too; SuperSync can rebase
+ * with authenticated receipt recovery when an upload response was lost.
  */
 export const keptLocalTimeDeltas = (
   conflicts: EntityConflict[],
-): { opIds: Set<string> } => {
+): { opIds: Set<string>; clockToDominate: VectorClock } => {
   const opIds = new Set<string>();
-  for (const { localOps } of conflicts) {
+  let clockToDominate: VectorClock = {};
+  for (const { localOps, remoteOps } of conflicts) {
     const deltas = localOps.filter(isSyncTimeSpentOp);
     if (deltas.length === 0) continue;
     deltas.forEach((op) => opIds.add(op.id));
+    for (const remote of remoteOps) {
+      clockToDominate = mergeVectorClocks(clockToDominate, remote.vectorClock);
+    }
   }
-  return { opIds };
+  return { opIds, clockToDominate };
+};
+
+/**
+ * SuperSync only: move kept pending deltas and newly written field patches past
+ * durable remote rows. Caller holds OPERATION_LOG, preventing upload selection
+ * of the fresh patches until their clocks are final. Never include local-win
+ * snapshots: their stale fields could then dominate newer remote edits. Older
+ * pending patches are also excluded: only deltas have receipt recovery.
+ */
+export const rebaseKeptTimeDeltas = async (
+  store: {
+    getOpById: (opId: string) => Promise<
+      | {
+          source: string;
+          syncedAt?: number;
+          rejectedAt?: number;
+          reducerRejectedAt?: number;
+        }
+      | undefined
+    >;
+    rebasePendingLocalOps: (
+      opIds: readonly string[],
+      clockToDominate: VectorClock,
+    ) => Promise<Operation[]>;
+  },
+  kept: { opIds: Set<string>; clockToDominate: VectorClock },
+  successorIds: string[],
+  assertFence?: (context: string) => void,
+): Promise<Operation[]> => {
+  const pendingDeltaIds: string[] = [];
+  for (const opId of kept.opIds) {
+    const entry = await store.getOpById(opId);
+    if (
+      entry?.source === 'local' &&
+      entry.syncedAt === undefined &&
+      entry.rejectedAt === undefined &&
+      entry.reducerRejectedAt === undefined
+    ) {
+      pendingDeltaIds.push(opId);
+    }
+  }
+  if (pendingDeltaIds.length === 0) return [];
+  assertFence?.('kept time delta rebase');
+  return store.rebasePendingLocalOps(
+    [...pendingDeltaIds, ...successorIds],
+    kept.clockToDominate,
+  );
 };
 
 /**
@@ -375,6 +430,28 @@ export const timeDeltasSurvivingLww = (
     return deltas.length > 0 ? [{ ...conflict, localOps: deltas }] : [];
   });
 };
+
+/**
+ * Eager rebasing is narrower than keeping a delta pending: only readable remote
+ * winners commute here. Moving a delta past its local-win snapshot can cause the
+ * server to reject that snapshot and replace additive history with absolute time.
+ * Opaque timeless rows retain the ordinary rejection path too.
+ */
+export const timeDeltasSurvivingRemoteWins = (
+  resolutions: { conflict: EntityConflict; winner: 'local' | 'remote' }[],
+  payloadKey: string,
+): EntityConflict[] =>
+  timeDeltasSurvivingLww(
+    resolutions.filter(
+      ({ conflict, winner }) =>
+        winner === 'remote' &&
+        [...conflict.localOps, ...conflict.remoteOps].every(
+          (op) =>
+            isSyncTimeSpentOp(op) || writesNoTaskTime(op, payloadKey, conflict.entityId),
+        ),
+    ),
+    payloadKey,
+  );
 
 /**
  * `SupersededOperationResolverService`: the fields a server-rejected group of

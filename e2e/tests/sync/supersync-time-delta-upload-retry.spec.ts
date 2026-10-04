@@ -239,6 +239,9 @@ test.describe('@supersync time delta upload identity', () => {
         await b.sync.clickSyncBtn();
         await expectExactTaskTime(b, title, expectedTime);
         expect((await readDeltas(b))[0].op.p).toEqual(original.p);
+        // The server already stored the original: this changed clock must use
+        // receipt recovery on retry, rather than an unchanged duplicate upload.
+        if (accepted) expect((await readDeltas(b))[0].op.v).not.toEqual(original.v);
         await unrouteSuperSyncOps(b.page);
 
         // Reload across the durable conflict-resolution / upload-ack boundary.

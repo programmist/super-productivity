@@ -19,6 +19,46 @@ show this loss. A local reproduction after removing only the eager rebase also
 confirmed an acknowledged local delta followed by that released replacement.
 Both released-client directions pass on the reverted baseline.
 
+## Integration with #10521
+
+The branch retains #10521's time-preserving resolutions instead of carrying the
+full #10499 revert onto newer master. Simply dropping the revert reproduced the
+released-client failure against `618189a492`, also seen in
+[Released Clients run 37233222109](https://github.com/super-productivity/super-productivity/actions/runs/37233222109/job/111527679633):
+the pending-loses E2E expected
+5,000 ms and received 3,000 ms. The SuperSync-only adaptation makes that same
+test pass, including reloads and a fresh receiver.
+
+Only a SuperSync cycle enables eager rebasing of kept time deltas. The cycle's
+captured provider supplies the policy for downloads and piggybacked operations;
+file providers retain immutable retries. The resolver rebases after remote rows
+are durable, while holding the operation-log lock, and rechecks the sync epoch
+immediately before the write. Only newly written field-patch resends move after
+the deltas. Whole local-win snapshots retain their clocks: moving them later can
+make stale fields dominate newer edits. Existing pending resolution rows are
+never included: receipt recovery covers only time deltas. Upload selection uses
+the same lock, so fresh patches cannot upload before their clocks are final.
+Live apply uses the returned rebased operation objects.
+
+Keeping a delta pending and rebasing it have separate eligibility rules. #10521's
+broader protection remains intact. Eager rebasing uses only merged field-patch
+conflicts and concurrent deltas beside readable, non-time-writing remote winners.
+Local winners and opaque timeless snapshots are excluded. The broader candidate
+failed the original `tasks:20725013` browser trace with 15,000 ms expected and
+11,000 ms received, and also failed the three-tracker regressions. Its original
+30-step trace is retained as `20725013-delta-order`.
+
+Rebasing before persisting the remote rows would be unsafe: a crash could leave
+a delta claiming knowledge of an edit that was never stored, causing the next
+download to discard that edit. Rebasing all providers would also violate
+WebDAV's immutable lost-response contract. Neither approach is used here.
+
+An initial adaptation also rebased new local-win snapshots. The original
+`tasks:20725008` fuzz seed and its 30-step encrypted browser reproduction both
+showed older notes `A9` replacing newer notes `B27`. Restricting successor rebases
+to field-patch resends addresses that causal-order regression; the permanent
+`20725008-notes-order` fixture retains the original steps and the notes oracle.
+
 ## Recovery contract
 
 Recovery is limited to a `syncTimeSpent` delta rejected with `INVALID_OP_ID`.
@@ -67,6 +107,27 @@ Validated locally on 2026-10-04 against reverted baseline `cea86337a9`:
   checks pass. The separate E2E TypeScript check encounters a pre-existing
   unresolved `src/app/core/util/vector-clock` import from
   `compact-operation.types.ts`, reached through existing E2E tests.
+
+## Integrated validation against #10521
+
+The final compatibility adaptation was validated against master `658228be60`:
+
+- All 31 browser cases pass: both v19.1.0 directions, current-client crossings,
+  stored/rejected lost-response retries, both newly reproduced ordering failures,
+  frozen restart traces, and SuperSync/WebDAV time-preserving resolutions.
+- The archive CI regression passes after reusing the shared navigation helper.
+
+- The unchanged 120-seed fuzz comparison reports no newly failing signatures.
+  119 executed traces match exactly; the `tasks:20725023` difference is covered
+  by both existing frozen restart variants.
+- 80 conflict-resolution/helper tests, 267 provider-routing/orchestration tests,
+  and 108 receipt/uploader/frozen-trace tests pass.
+- App and spec TypeScript checks and required modified-file checks pass.
+- An independent adversarial review verified the narrowed eligibility contract.
+  Its real encrypted crash-before-rebase probe preserved tracked time after
+  reload, on a fresh receiver, and on v19.1.0; no speculative guard was added.
+  An invalid unit fixture found by that review was corrected to use the actual
+  LWW payload shape (`entityChanges: []`).
 
 ## Review
 

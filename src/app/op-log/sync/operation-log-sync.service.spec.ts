@@ -545,51 +545,58 @@ describe('OperationLogSyncService', () => {
         }
       });
 
-      it('should return localWinOpsCreated count from piggybacked ops processing', async () => {
-        opLogStoreSpy.getUnsynced.and.returnValue(Promise.resolve([]));
+      for (const providerMode of ['superSyncOps', 'fileSnapshotOps'] as const) {
+        it(`should return localWinOpsCreated count from piggybacked ops processing (${providerMode})`, async () => {
+          opLogStoreSpy.getUnsynced.and.returnValue(Promise.resolve([]));
 
-        const piggybackedOp: Operation = {
-          id: 'piggybacked-1',
-          clientId: 'client-B',
-          actionType: 'test' as ActionType,
-          opType: OpType.Update,
-          entityType: 'TASK',
-          entityId: 'task-1',
-          payload: { title: 'Remote Title' },
-          vectorClock: { clientB: 1 },
-          timestamp: Date.now(),
-          schemaVersion: 1,
-        };
+          const piggybackedOp: Operation = {
+            id: 'piggybacked-1',
+            clientId: 'client-B',
+            actionType: 'test' as ActionType,
+            opType: OpType.Update,
+            entityType: 'TASK',
+            entityId: 'task-1',
+            payload: { title: 'Remote Title' },
+            vectorClock: { clientB: 1 },
+            timestamp: Date.now(),
+            schemaVersion: 1,
+          };
 
-        uploadServiceSpy.uploadPendingOps.and.returnValue(
-          Promise.resolve({
-            uploadedCount: 1,
-            piggybackedOps: [piggybackedOp],
-            rejectedCount: 0,
-            rejectedOps: [],
-          }),
-        );
+          uploadServiceSpy.uploadPendingOps.and.returnValue(
+            Promise.resolve({
+              uploadedCount: 1,
+              piggybackedOps: [piggybackedOp],
+              rejectedCount: 0,
+              rejectedOps: [],
+            }),
+          );
 
-        // Mock remoteOpsProcessingService to return 2 local-win ops
-        remoteOpsProcessingServiceSpy.processRemoteOps.and.resolveTo({
-          localWinOpsCreated: 2,
-          allOpsFilteredBySyncImport: false,
-          filteredOpCount: 0,
-          isLocalUnsyncedImport: false,
-          blockedByIncompatibleOp: false,
+          // Mock remoteOpsProcessingService to return 2 local-win ops
+          remoteOpsProcessingServiceSpy.processRemoteOps.and.resolveTo({
+            localWinOpsCreated: 2,
+            allOpsFilteredBySyncImport: false,
+            filteredOpCount: 0,
+            isLocalUnsyncedImport: false,
+            blockedByIncompatibleOp: false,
+          });
+
+          const mockProvider = {
+            providerMode,
+            isReady: () => Promise.resolve(true),
+          } as unknown as OperationSyncCapable;
+
+          const result = await service.uploadPendingOps(mockProvider);
+
+          expect(result.kind).toBe('completed');
+          if (result.kind === 'completed') {
+            expect(result.localWinOpsCreated).toBe(2);
+          }
+          expect(
+            remoteOpsProcessingServiceSpy.processRemoteOps.calls.mostRecent().args[1]
+              ?.rebaseKeptTimeDeltas,
+          ).toBe(providerMode === 'superSyncOps' ? true : undefined);
         });
-
-        const mockProvider = {
-          isReady: () => Promise.resolve(true),
-        } as any;
-
-        const result = await service.uploadPendingOps(mockProvider);
-
-        expect(result.kind).toBe('completed');
-        if (result.kind === 'completed') {
-          expect(result.localWinOpsCreated).toBe(2);
-        }
-      });
+      }
 
       it('should flag the piggybacked SYNC_IMPORT conflict as never-synced using PRE-upload history', async () => {
         // Regression: the never-synced guard must be captured before the upload marks
@@ -1685,55 +1692,62 @@ describe('OperationLogSyncService', () => {
         expect(result.kind).toBe('no_new_ops');
       });
 
-      it('should return localWinOpsCreated count and newOpsCount from processing remote ops', async () => {
-        opLogStoreSpy.getUnsynced.and.returnValue(Promise.resolve([]));
+      for (const providerMode of ['superSyncOps', 'fileSnapshotOps'] as const) {
+        it(`should return localWinOpsCreated count and newOpsCount from processing remote ops (${providerMode})`, async () => {
+          opLogStoreSpy.getUnsynced.and.returnValue(Promise.resolve([]));
 
-        const remoteOp: Operation = {
-          id: 'remote-1',
-          clientId: 'client-B',
-          actionType: 'test' as ActionType,
-          opType: OpType.Update,
-          entityType: 'TASK',
-          entityId: 'task-1',
-          payload: { title: 'Remote Title' },
-          vectorClock: { clientB: 1 },
-          timestamp: Date.now(),
-          schemaVersion: 1,
-        };
+          const remoteOp: Operation = {
+            id: 'remote-1',
+            clientId: 'client-B',
+            actionType: 'test' as ActionType,
+            opType: OpType.Update,
+            entityType: 'TASK',
+            entityId: 'task-1',
+            payload: { title: 'Remote Title' },
+            vectorClock: { clientB: 1 },
+            timestamp: Date.now(),
+            schemaVersion: 1,
+          };
 
-        downloadServiceSpy.downloadRemoteOps.and.returnValue(
-          Promise.resolve({
-            newOps: [remoteOp],
-            hasMore: false,
-            latestSeq: 1,
-            needsFullStateUpload: false,
-            success: true,
-            providerMode: 'superSyncOps',
-            failedFileCount: 0,
-          }),
-        );
+          downloadServiceSpy.downloadRemoteOps.and.returnValue(
+            Promise.resolve({
+              newOps: [remoteOp],
+              hasMore: false,
+              latestSeq: 1,
+              needsFullStateUpload: false,
+              success: true,
+              providerMode: 'superSyncOps',
+              failedFileCount: 0,
+            }),
+          );
 
-        // Mock remoteOpsProcessingService to return 1 local-win op
-        remoteOpsProcessingServiceSpy.processRemoteOps.and.resolveTo({
-          localWinOpsCreated: 1,
-          allOpsFilteredBySyncImport: false,
-          filteredOpCount: 0,
-          isLocalUnsyncedImport: false,
-          blockedByIncompatibleOp: false,
+          // Mock remoteOpsProcessingService to return 1 local-win op
+          remoteOpsProcessingServiceSpy.processRemoteOps.and.resolveTo({
+            localWinOpsCreated: 1,
+            allOpsFilteredBySyncImport: false,
+            filteredOpCount: 0,
+            isLocalUnsyncedImport: false,
+            blockedByIncompatibleOp: false,
+          });
+
+          const mockProvider = {
+            providerMode,
+            isReady: () => Promise.resolve(true),
+          } as unknown as OperationSyncCapable;
+
+          const result = await service.downloadRemoteOps(mockProvider);
+
+          expect(result.kind).toBe('ops_processed');
+          if (result.kind === 'ops_processed') {
+            expect(result.localWinOpsCreated).toBe(1);
+            expect(result.newOpsCount).toBe(1);
+          }
+          expect(
+            remoteOpsProcessingServiceSpy.processRemoteOps.calls.mostRecent().args[1]
+              ?.rebaseKeptTimeDeltas,
+          ).toBe(providerMode === 'superSyncOps' ? true : undefined);
         });
-
-        const mockProvider = {
-          isReady: () => Promise.resolve(true),
-        } as any;
-
-        const result = await service.downloadRemoteOps(mockProvider);
-
-        expect(result.kind).toBe('ops_processed');
-        if (result.kind === 'ops_processed') {
-          expect(result.localWinOpsCreated).toBe(1);
-          expect(result.newOpsCount).toBe(1);
-        }
-      });
+      }
 
       it('should preserve repair context and the final conflict guard together', async () => {
         const remoteOp = {

@@ -1298,9 +1298,9 @@ export class OperationLogStoreService implements RemoteOperationApplyStorePort<O
 
   /**
    * Moves pending local ops past `clockToDominate` IN PLACE, in seq order: id, seq
-   * and payload stay, so an additive `syncTimeSpent` replays once. Only for ops the
-   * server never stored; caller holds OPERATION_LOG. Rebases nothing if a row is no
-   * longer a pending op of this client (e.g. another tab synced it).
+   * and payload stay, so an additive `syncTimeSpent` replays once. Only for unstored
+   * ops or receipt-recoverable SuperSync deltas; caller holds OPERATION_LOG. No-op if
+   * any row is no longer pending for this client (e.g. another tab synced it).
    */
   async rebasePendingLocalOps(
     opIds: readonly string[],
